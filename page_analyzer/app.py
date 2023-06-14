@@ -1,32 +1,19 @@
-from flask import (Flask, 
-                   request, 
-                   url_for, 
-                   flash, 
-                   redirect, 
-                   render_template
-)
+from flask import Flask, request, url_for, flash, redirect, render_template, get_flashed_messages
 import os
 import requests
-import datetime
-import psycopg2
-import psycopg2.extras
+from datetime import datetime
+from psycopg2 import connect
 from dotenv import load_dotenv
-from requests import ConnectionError, HTTPError
 from page_analyzer.url_valid import validate_url
-from page_analyzer.html import get_url_data
-from urllib.parse import urlparse
+from page_analyzer.html import get_page_content
+from page_analyzer.data import add_check, get_checks_by_id, get_urls_by_name, add_site, get_all_urls, get_urls_by_id
 
  
 app = Flask(__name__)
  
  
 load_dotenv()
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY')
-DATABASE_URL = os.getenv('DATABASE_URL')
-
-
-def get_connection():
-    return psycopg2.connect(DATABASE_URL)
+app.secret_key = os.getenv('SECRET_KEY')
 
 
 @app.route('/')
@@ -35,112 +22,93 @@ def index():
 
 
 @app.post('/urls')
-def post_url():
+def urls_post():
     url = request.form.get('url')
     check = validate_url(url)
-    if check:
-        for error in check:
-            flash(error, 'alert alert-danger')
-        return render_template(
-            'index.html',
-            url_input=url,
-        ), 422
-    parsed_url = urlparse(url)
-    valid_url = parsed_url.scheme + '://' + parsed_url.netloc
-    with get_connection() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.NamedTupleCursor) as cur:
-            cur.execute("""
-                SELECT id FROM urls
-                WHERE name = %s""", [valid_url])
-            result = cur.fetchone()
-            if result:
-                flash('Страница уже существует', 'alert alert-info')
-                return redirect(url_for('url_added', id=result.id))
-
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            date = datetime.date.today()
-            cur.execute("""
-                INSERT INTO urls (name, created_at)
-                VALUES (%s, %s) RETURNING id""", [valid_url, date])
-            url_id = cur.fetchone()[0]
-            conn.commit()
-        flash('Страница успешно добавлена', 'alert alert-success')
-        return redirect(url_for('url_added', id=url_id))
-
-
-@app.route('/urls/<id>')
-def url_added(id):
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT name, created_at
-                FROM urls
-                WHERE id = %s""", [id])
-            url_name, url_created_at = cur.fetchone()
-
-    with get_connection() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.NamedTupleCursor) as cur:
-            cur.execute("""
-                SELECT id, created_at, status_code, h1, title, description
-                FROM url_checks
-                WHERE url_id = %s
-                ORDER BY id DESC""", [id])
-            rows = cur.fetchall()
-    return render_template(
-        'page.html',
-        url_name=url_name,
-        url_id=id,
-        url_created_at=url_created_at.date(),
-        checks=rows
-    )
+    conn = connect(os.getenv('DATABASE_URL'))
+    found = get_urls_by_name(check['url'], conn)
+    conn.close()
+    if found:
+        check['error'] = 'exists'
+    url = check['url']
+    error = check['error']
+    if error == 'exists':
+        conn = connect(os.getenv('DATABASE_URL'))
+        url_id_ = get_urls_by_name(url, conn)['id']
+        conn.close()
+        flash('Страница уже существует', 'alert-info')
+        return redirect(url_for('url_show', url_id_=url_id_))
+    elif error == 'max':
+        flash('Некорректный URL', 'alert-danger')
+        flash('URL превышает 255 символов', 'alert-danger')
+        messages = get_flashed_messages(with_categories=True)
+        return render_template('index.html', url=url, messages=messages), 422
+    elif error == 'none':
+        flash('Некорректный URL', 'alert-danger')
+        flash('URL обязателен', 'alert-danger')
+        messages = get_flashed_messages(with_categories=True)
+        return render_template('index.html', url=url, messages=messages), 422
+    elif error == 'invalid':
+        flash('Некорректный URL', 'alert-danger')
+        messages = get_flashed_messages(with_categories=True)
+        return render_template('index.html', url=url, messages=messages), 422
+    else:
+        site = {
+            'url': url,
+            'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+        conn = connect(os.getenv('DATABASE_URL'))
+        add_site(site, conn)
+        conn.close()
+        conn = connect(os.getenv('DATABASE_URL'))
+        url_id_ = get_urls_by_name(url, conn)['id']
+        conn.close()
+        flash('Страница успешно добавлена', 'alert-success')
+        return redirect(url_for('url_show', url_id_=url_id_))
 
 
 @app.get('/urls')
 def urls_get():
-    with get_connection() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.NamedTupleCursor) as cur:
-            cur.execute("""
-                SELECT
-                DISTINCT ON (urls.id) urls.id, urls.name, MAX(url_checks.created_at), url_checks.status_code
-                FROM urls
-                LEFT JOIN url_checks ON urls.id = url_checks.url_id
-                GROUP BY urls.id, url_checks.status_code
-                ORDER BY urls.id DESC""")
-            rows = cur.fetchall()
-    return render_template(
-        'pages.html',
-        checks=rows
-    )
+    conn = connect(os.getenv('DATABASE_URL'))
+    urls = get_all_urls(conn)
+    conn.close()
+    messages = get_flashed_messages(with_categories=True)
+    return render_template('urls.html', urls=urls, messages=messages)
 
 
-@app.route('/urls/<id>/checks', methods=['POST'])
-def id_check(id):
-    with get_connection() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.NamedTupleCursor) as cur:
-            cur.execute("""
-                SELECT name
-                FROM urls
-                WHERE id = %s""", [id])
-            result = cur.fetchone()
-
-    url_name = result.name
+@app.route('/urls/<int:url_id_>')
+def url_show(url_id_):
     try:
-        response = requests.get(url_name)
-        response.raise_for_status()
-    except (ConnectionError, HTTPError):
-        flash('Произошла ошибка при проверке', 'alert alert-danger')
-        return redirect(url_for('url_added', id=id))
+        conn = connect(os.getenv('DATABASE_URL'))
+        url = get_urls_by_id(url_id_, conn)
+        conn.close()
+        conn = connect(os.getenv('DATABASE_URL'))
+        checks = get_checks_by_id(url_id_, conn)
+        conn.close()
+        messages = get_flashed_messages(with_categories=True)
+        return render_template('show_url.html', 
+                                url=url, 
+                                checks=checks,
+                                messages=messages)
 
-    status_code = response.status_code
-    h1, title, meta = get_url_data(response.text)
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            date = datetime.date.today()
-            cur.execute("""
-                INSERT INTO url_checks (url_id, created_at, status_code, h1, title, description)
-                VALUES (%s, %s, %s, %s, %s, %s)""", [
-                id, date, status_code, h1, title, meta])
-            conn.commit()
-    flash('Страница успешно проверена', 'alert alert-success')
-    return redirect(url_for('url_added', id=id))
+
+@app.post('/urls/<int:url_id_>/checks')
+def url_check(url_id_):
+    conn = connect(os.getenv('DATABASE_URL'))
+    url = get_urls_by_id(url_id_, conn)['name']
+    conn.close()
+    try:
+        check = get_page_content(url)
+        check['url_id'] = url_id_
+        check['checked_at'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        conn = connect(os.getenv('DATABASE_URL'))
+        add_check(check, conn)
+        conn.close()
+        flash('Страница успешно проверена', 'alert-success')
+    except requests.RequestException:
+        flash('Произошла ошибка при проверке', 'alert-danger')
+    return redirect(url_for('url_show', url_id_=url_id_))
+
+
+if __name__ == '__main__':
+    app.run()
