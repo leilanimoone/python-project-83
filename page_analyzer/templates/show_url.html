@@ -1,25 +1,25 @@
 {% extends "main.html" %}
 
 {% block title %}
-    Анализатор страниц - {{ url_name }}
+    Анализатор страниц - {{ url.name }}
 {% endblock %}
 
 {% block main %}
-<h1>Сайт: {{ url_name }}</h1>
+<h1>Сайт: {{ url.name }}</h1>
 <div class="table-responsive">
     <table class="table table-bordered table-hover text-nowrap" data-test="url">
         <tbody>
             <tr>
                 <td>ID</td>
-                <td>{{ url_id }}</td>
+                <td>{{ url.id }}</td>
             </tr>
             <tr>
                 <td>Имя</td>
-                <td>{{ url_name }}</td>
+                <td>{{ url.name }}</td>
             </tr>
             <tr>
                 <td>Дата создания</td>
-                <td>{{ url_created_at }}</td>
+                <td>{{ url.created_at }}</td>
             </tr>
         </tbody>
     </table>
@@ -27,7 +27,7 @@
         
 <h2 class="mt-5 mb-3">Проверки</h2>
         
-<form  method="post" action="{{ url_for('id_check', id=url_id) }}">
+<form  method="post" action="/urls/{{url.id}}/checks">
     <input type="submit" class="btn btn-primary px-3" value="Запустить проверку">
 </form>
         

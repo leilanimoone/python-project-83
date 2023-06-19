@@ -1,26 +1,31 @@
 import os
 import requests
-import psycopg2
-import psycopg2.extras
-import datetime
 from flask import (Flask,
                    request,
                    url_for,
                    flash,
                    redirect,
-                   render_template)
+                   render_template,
+                   get_flashed_messages)
+from datetime import datetime
 from dotenv import load_dotenv
-from urllib.parse import urlparse
-from requests import ConnectionError, HTTPError
 from page_analyzer.url_valid import validate_url
 from page_analyzer.html import get_page_content
-from page_analyzer.data import get_connection
+from page_analyzer.data import (get_connection,
+                                close,
+                                get_urls_by_id,
+                                get_urls_by_name,
+                                get_all_urls,
+                                add_site,
+                                add_check,
+                                get_checks_by_id)
 
 
 load_dotenv()
 
+
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY')
+app.secret_key = os.getenv('SECRET_KEY')
 
 
 @app.route('/')
@@ -30,113 +35,91 @@ def index():
 
 @app.get('/urls')
 def urls_get():
-    with get_connection() as con:
-        with con.cursor(cursor_factory=psycopg2.extras.NamedTupleCursor) as cur:
-            cur.execute("""
-                SELECT DISTINCT ON (urls.id) urls.id,
-                                             urls.name,
-                                             MAX(url_checks.created_at),
-                                             url_checks.status_code
-                FROM urls
-                LEFT JOIN url_checks ON urls.id = url_checks.url_id
-                GROUP BY urls.id, url_checks.status_code
-                ORDER BY urls.id DESC""")
-            rows = cur.fetchall()
-    return render_template('urls.html', checks=rows)
+    conn = get_connection()
+    urls = get_all_urls(conn)
+    close(conn)
+    messages = get_flashed_messages(with_categories=True)
+    return render_template('urls.html', urls=urls, messages=messages)
 
 
 @app.post('/urls')
 def urls_post():
     url = request.form.get('url')
-    errors = validate_url(url)
-    if errors:
-        for error in errors:
-            flash(error, 'alert alert-danger')
-        return render_template('index.html', url_input=url), 422
-    parsed_url = urlparse(url)
-    valid_url = parsed_url.scheme + '://' + parsed_url.netloc
-    with get_connection() as con:
-        with con.cursor(cursor_factory=psycopg2.extras.NamedTupleCursor) as cur:
-            cur.execute("""
-                SELECT id FROM urls
-                WHERE name = %s""", [valid_url])
-            result = cur.fetchone()
-            if result:
-                flash('Страница уже существует', 'alert alert-info')
-                return redirect(url_for('url_added', id=result.id))
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            date = datetime.date.today()
-            cur.execute("""
-                INSERT INTO urls (name, created_at)
-                VALUES (%s, %s) RETURNING id""", [valid_url, date])
-            url_id = cur.fetchone()[0]
-            conn.commit()
-        flash('Страница успешно добавлена', 'alert alert-success')
-        return redirect(url_for('url_added', id=url_id))
+    check = validate_url(url)
+    conn = get_connection()
+    found = get_urls_by_name(check['url'], conn)
+    close(conn)
+
+    if found:
+        check['error'] = 'exists'
+    url = check['url']
+    error = check['error']
+
+    if error == 'exists':
+        conn = get_connection()
+        url_id_ = get_urls_by_name(url, conn)['id']
+        close(conn)
+        flash('Страница уже существует', 'alert-info')
+        return redirect(url_for('url_show', url_id_=url_id_))
+    elif error == 'zero':
+        flash('Некорректный URL', 'alert-danger')
+        flash('URL обязателен', 'alert-danger')
+        messages = get_flashed_messages(with_categories=True)
+        return render_template('index.html', url=url, messages=messages), 422
+    elif error == 'length':
+        flash('Некорректный URL', 'alert-danger')
+        flash('URL превышает 255 символов', 'alert-danger')
+        messages = get_flashed_messages(with_categories=True)
+        return render_template('index.html', url=url, messages=messages), 422
+    elif error == 'invalid':
+        flash('Некорректный URL', 'alert-danger')
+        messages = get_flashed_messages(with_categories=True)
+        return render_template('index.html', url=url, messages=messages), 422
+    else:
+        site = {'url': url,
+                'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+        conn = get_connection()
+        add_site(site, conn)
+        close(conn)
+        conn = get_connection()
+        url_id_ = get_urls_by_name(url, conn)['id']
+        close(conn)
+        flash('Страница успешно добавлена', 'alert-success')
+        return redirect(url_for('url_show', url_id_=url_id_))
 
 
-@app.route('/urls/<id>')
-def url_added(id):
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT name, created_at
-                FROM urls
-                WHERE id = %s""", [id])
-            url_name, url_created_at = cur.fetchone()
-
-    with get_connection() as con:
-        with con.cursor(cursor_factory=psycopg2.extras.NamedTupleCursor) as cur:
-            cur.execute("""
-                SELECT id, created_at, status_code, h1, title, description
-                FROM url_checks
-                WHERE url_id = %s
-                ORDER BY id DESC""", [id])
-            rows = cur.fetchall()
-        return render_template('show_url.html',
-                               url_name=url_name,
-                               url_id=id,
-                               url_created_at=url_created_at.date(),
-                               checks=rows)
-
-
-@app.post('/urls/<id>/checks', methods=['POST'])
-def id_check(id):
-    with get_connection() as con:
-        with con.cursor(cursor_factory=psycopg2.extras.NamedTupleCursor) as cur:
-            cur.execute("""
-                SELECT name
-                FROM urls
-                WHERE id = %s""", [id])
-            result = cur.fetchone()
-
-    url_name = result.name
+@app.route('/urls/<url_id_>')
+def url_show(url_id_):
     try:
-        response = requests.get(url_name)
-        response.raise_for_status()
-    except (ConnectionError, HTTPError):
-        flash("Произошла ошибка при проверке", "alert alert-danger")
-        return redirect(url_for('url_added', id=id))
+        conn = get_connection()
+        url = get_urls_by_id(url_id_, conn)
+        close(conn)
+        conn = get_connection()
+        checks = get_checks_by_id(url_id_, conn)
+        close(conn)
+        messages = get_flashed_messages(with_categories=True)
+        file = 'show_url.html'
+        return render_template(file, url=url, checks=checks, messages=messages)
+    except IndexError:
+        return render_template('error.html'), 404
 
-    status_code = response.status_code
-    h1, title, meta = get_page_content(response.text)
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            date = datetime.date.today()
-            q_insert = """INSERT
-            INTO url_checks(
-                url_id,
-                created_at,
-                status_code,
-                h1,
-                title,
-                description)
-            VALUES (%s, %s, %s, %s, %s, %s)"""
-            cur.execute(q_insert, [id, date, status_code, h1, title, meta])
-            conn.commit()
-    flash("Страница успешно проверена", "alert alert-success")
-    return redirect(url_for('url_added', id=id))
+
+@app.post('/urls/<url_id_>/checks')
+def url_check(url_id_):
+    conn = get_connection()
+    url = get_urls_by_id(url_id_, conn)['name']
+    close(conn)
+    try:
+        check = get_page_content(url)
+        check['url_id'] = url_id_
+        check['checked_at'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        conn = get_connection()
+        add_check(check, conn)
+        close(conn)
+        flash('Страница успешно проверена', 'alert-success')
+    except requests.RequestException:
+        flash('Произошла ошибка при проверке', 'alert-danger')
+    return redirect(url_for('url_show', url_id_=url_id_))
 
 
 if __name__ == '__main__':
