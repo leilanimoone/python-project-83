@@ -7,6 +7,18 @@ from psycopg2 import connect
 load_dotenv()
 
 
+def get_connection():
+    return connect(os.getenv('DATABASE_URL'))
+
+
+def close(conn):
+    conn.close()
+
+
+def commit_db(conn):
+    conn.commit()
+
+
 def add_check(check, conn):
     with conn.cursor() as cur:
         q_insert = '''INSERT
@@ -26,7 +38,7 @@ def add_check(check, conn):
             check['description'],
             check['checked_at']
         ))
-        conn.commit()
+        commit_db(conn)
 
 
 def get_checks_by_id(url_id_, conn):
@@ -54,8 +66,11 @@ def add_site(site, conn):
         q_insert = '''INSERT
         INTO urls (name, created_at)
         VALUES (%s, %s)'''
-        cur.execute(q_insert, (site['url'], site['created_at']))
-        conn.commit()
+        cur.execute(q_insert, (
+            site['url'],
+            site['created_at']
+        ))
+        commit_db(conn)
 
 
 def get_all_urls(conn):

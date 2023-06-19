@@ -4,9 +4,9 @@ from urllib.parse import urlparse
 def validate_url(url):
     error = ''
     if len(url) == 0:
-        error = 'none'
+        error = 'zero'
     elif len(url) > 255:
-        error = 'max'
+        error = 'length'
     elif not url(url):
         error = 'invalid'
     else:
