@@ -15,16 +15,14 @@
                 <th>Последняя проверка</th>
                 <th>Код ответа</th>
             </tr>
-            {% if urls %}
-                {% for url in urls %}
+                {% for url in checks %}
                 <tr>
                     <td>{{ url.id }}</td>
-                    <td><a href="{{ url_for('url_show', url_id_=url.id) }}">{{ url.name }}</a></td>
-                    <td>{{ url.last_check if url.last_check is not none }}</td>
-                    <td>{{ url.status_code if url.status_code is not none }}</td>
+                    <td><a href="{{ url_for('url_added', id=url.id) }}">{{ url.name }}</a></td>
+                    <td>{{ url.created_at }}</td>
+                    <td>{{ url.status_code }}</td>
                 </tr>
                 {% endfor %}
-            {% endif %}
         </tbody>
     </table>
 </div>
