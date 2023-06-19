@@ -54,9 +54,7 @@ def get_checks_by_id(url_id_, conn):
 
 def get_urls_by_name(name, conn):
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        q_select = '''SELECT *
-        FROM urls WHERE name=(%s)'''
-        cur.execute(q_select, [name])
+        cur.execute('''SELECT * FROM urls WHERE name=(%s)''', [name])
         urls = cur.fetchone()
     return urls
 
@@ -95,8 +93,6 @@ def get_all_urls(conn):
 
 def get_urls_by_id(url_id_, conn):
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        q_select = '''SELECT *
-        FROM urls WHERE id=(%s)'''
-        cur.execute(q_select, [url_id_])
+        cur.execute('''SELECT * FROM urls WHERE id=(%s)''', [url_id_])
         urls = cur.fetchone()
     return urls
