@@ -5,7 +5,7 @@ build:
 	poetry build
 
 build-db: 
-        db-reset schema-data-load
+	db-reset schema-data-load
 
 db-start:
 	sudo service postgresql start
@@ -27,7 +27,7 @@ db-reset:
 	createdb page_analyzer
 
 db-dev-setup: 
-        db-reset schema-load
+	db-reset schema-load
 
 schema-load:
 	psql page_analyzer < database.sql
