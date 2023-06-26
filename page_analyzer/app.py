@@ -9,11 +9,10 @@ from flask import (Flask,
                    get_flashed_messages)
 from datetime import datetime
 from dotenv import load_dotenv
+from psycopg2.pool import SimpleConnectionPool
 from page_analyzer.url_valid import validate_url
 from page_analyzer.html import get_page_content
-from page_analyzer.data import (get_connection,
-                                close,
-                                get_urls_by_id,
+from page_analyzer.data import (get_urls_by_id,
                                 get_urls_by_name,
                                 get_all_urls,
                                 add_site,
@@ -22,6 +21,10 @@ from page_analyzer.data import (get_connection,
 
 
 load_dotenv()
+
+
+DATABASE_URL = os.getenv('DATABASE_URL')
+pool = SimpleConnectionPool(minconn=1, maxconn=10, dsn=DATABASE_URL)
 
 
 app = Flask(__name__)
@@ -35,9 +38,9 @@ def index():
 
 @app.get('/urls')
 def urls_get():
-    conn = get_connection()
+    conn = pool.getconn()
     urls = get_all_urls(conn)
-    close(conn)
+    pool.putconn(conn)
     messages = get_flashed_messages(with_categories=True)
     return render_template('urls.html', urls=urls, messages=messages)
 
@@ -46,9 +49,9 @@ def urls_get():
 def urls_post():
     url = request.form.get('url')
     check = validate_url(url)
-    conn = get_connection()
+    conn = pool.getconn()
     found = get_urls_by_name(check['url'], conn)
-    close(conn)
+    pool.putconn(conn)
 
     if found:
         check['error'] = 'exists'
@@ -56,9 +59,9 @@ def urls_post():
     error = check['error']
 
     if error == 'exists':
-        conn = get_connection()
+        conn = pool.getconn()
         url_id_ = get_urls_by_name(url, conn)['id']
-        close(conn)
+        pool.putconn(conn)
         flash('Страница уже существует', 'alert-info')
         return redirect(url_for('url_show', url_id_=url_id_))
     elif error == 'zero':
@@ -78,12 +81,12 @@ def urls_post():
     else:
         site = {'url': url,
                 'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-        conn = get_connection()
+        conn = pool.getconn()
         add_site(site, conn)
-        close(conn)
-        conn = get_connection()
+        pool.putconn(conn)
+        conn = pool.getconn()
         url_id_ = get_urls_by_name(url, conn)['id']
-        close(conn)
+        pool.putconn(conn)
         flash('Страница успешно добавлена', 'alert-success')
         return redirect(url_for('url_show', url_id_=url_id_))
 
@@ -91,12 +94,12 @@ def urls_post():
 @app.route('/urls/<url_id_>')
 def url_show(url_id_):
     try:
-        conn = get_connection()
+        conn = pool.getconn()
         url = get_urls_by_id(url_id_, conn)
-        close(conn)
-        conn = get_connection()
+        pool.putconn(conn)
+        conn = pool.getconn()
         checks = get_checks_by_id(url_id_, conn)
-        close(conn)
+        pool.putconn(conn)
         messages = get_flashed_messages(with_categories=True)
         file = 'show_url.html'
         return render_template(file, url=url, checks=checks, messages=messages)
@@ -106,16 +109,16 @@ def url_show(url_id_):
 
 @app.post('/urls/<url_id_>/checks')
 def url_check(url_id_):
-    conn = get_connection()
+    conn = pool.getconn()
     url = get_urls_by_id(url_id_, conn)['name']
-    close(conn)
+    pool.putconn(conn)
     try:
         check = get_page_content(url)
         check['url_id'] = url_id_
         check['checked_at'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        conn = get_connection()
+        conn = pool.getconn()
         add_check(check, conn)
-        close(conn)
+        pool.putconn(conn)
         flash('Страница успешно проверена', 'alert-success')
     except requests.RequestException:
         flash('Произошла ошибка при проверке', 'alert-danger')

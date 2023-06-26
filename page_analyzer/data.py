@@ -1,22 +1,4 @@
-import os
-from dotenv import load_dotenv
 from psycopg2.extras import RealDictCursor
-from psycopg2 import connect
-
-
-load_dotenv()
-
-
-def get_connection():
-    return connect(os.getenv('DATABASE_URL'))
-
-
-def close(conn):
-    conn.close()
-
-
-def commit_db(conn):
-    conn.commit()
 
 
 def add_check(check, conn):
@@ -38,7 +20,7 @@ def add_check(check, conn):
             check['description'],
             check['checked_at']
         ))
-        commit_db(conn)
+        conn.commit()
 
 
 def get_checks_by_id(url_id_, conn):
@@ -68,26 +50,25 @@ def add_site(site, conn):
             site['url'],
             site['created_at']
         ))
-        commit_db(conn)
+        conn.commit()
 
 
 def get_all_urls(conn):
-    conn.autocommit = True
-    curs = conn.cursor(cursor_factory=RealDictCursor)
-    curs.execute("""
-    SELECT DISTINCT ON (id) *
-    FROM urls
-    LEFT JOIN (
-    SELECT
-        url_id,
-        status_code,
-        created_at AS last_check
-    FROM url_checks
-    ORDER BY id DESC
-    ) AS checks ON urls.id = checks.url_id
-    ORDER BY id DESC
-    """)
-    data_urls = curs.fetchall()
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("""
+        SELECT DISTINCT ON (id) *
+        FROM urls
+        LEFT JOIN (
+        SELECT
+            url_id,
+            status_code,
+            created_at AS last_check
+        FROM url_checks
+        ORDER BY id DESC
+        ) AS checks ON urls.id = checks.url_id
+        ORDER BY id DESC
+        """)
+        data_urls = cur.fetchall()
     return data_urls
 
 
